@@ -236,38 +236,6 @@ Status icons on Fencing Worldwide map to:
 - `external` — hosted elsewhere (FencingTime Live, etc.)
 - `archive` — finished event
 
----
-
-## AWS Lambda (optional)
-
-The public API is meant to run as `serve` plus SQLite.
-`lambda_function.lambda_handler` can still take a Fencing Worldwide snapshot and
-write JSON to S3 if you want a cloud backup, but it is not the API. Rankings sync
-and calendar `--details` do not fit in a 15-minute Lambda.
-
-| Env / event field | Purpose |
-| --- | --- |
-| `FENCEAPI_NATION` / `nation` | Optional NOC filter (`ger`, `bra`, …) |
-| `FENCEAPI_S3_BUCKET` / `bucket` | If set, write the snapshot JSON |
-| `FENCEAPI_INCLUDE_RESULTS` / `include_results` | Also fetch every result list (slow) |
-| `FENCEAPI_INTERVAL` / `interval` | Seconds between requests (default `1.0`) |
-
-```bash
-pip install -t dist/lambda .
-cd dist/lambda && zip -r ../fenceapi-lambda.zip .
-```
-
-Set the handler to `lambda_function.lambda_handler` and trigger it on a schedule
-with EventBridge. Keep `include_results` off unless you need full rankings.
-
-## Tests
-
-```bash
-pytest
-```
-
-Parsers are tested against saved HTML fixtures so CI does not hit the live site.
-
 ## Courtesy
 
 `robots.txt` on the upstream sites allows crawling (`Allow: /`). Identify this
