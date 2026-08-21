@@ -1,0 +1,28 @@
+[project]
+name = "fenceapi"
+version = "0.1.0"
+description = "Open-source scraper and JSON API for Fencing Worldwide and Ophardt"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.27"]
+dev = ["pytest>=8.0", "httpx>=0.27", "fastapi>=0.110"]
+aws = ["boto3>=1.34"]
+
+[project.scripts]
+fenceapi = "fenceapi.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fenceapi*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -22,6 +22,12 @@ build/
 .mypy_cache/
 .ruff_cache/
 
+# Local data
+data/*.sqlite
+data/*.sqlite-*
+data/*.json.tmp
+data/rankings-sync.log
+
 # OS and editors
 .DS_Store
 .idea/

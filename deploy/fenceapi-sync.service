@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh fenceapi calendar cache
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fenceapi
+ExecStart=/opt/fenceapi/.venv/bin/python -m fenceapi sync-calendar
