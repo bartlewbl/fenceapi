@@ -14,6 +14,41 @@ from fenceapi.store import RankingStore
 CALENDAR_TTL = 30 * 60
 EVENT_TTL = 15 * 60
 SNAPSHOT_TTL = 10 * 60
+ATHLETE_TTL = 60 * 60
+
+ATHLETE_SECTIONS = frozenset(
+    {
+        "medals",
+        "exams",
+        "results",
+        "match_stats",
+        "season_rankings",
+        "selections",
+        "memberships",
+        "rankings",
+        "club_history",
+    }
+)
+ATHLETE_INCLUDE_ALIASES = {
+    "overview": ("medals", "exams"),
+    "history": ("rankings", "club_history"),
+    "profile": ("medals", "exams", "memberships", "selections", "season_rankings"),
+}
+ATHLETE_IDENTITY_KEYS = (
+    "athlete_id",
+    "url",
+    "name",
+    "nation",
+    "clubs",
+    "weapons",
+    "age",
+    "gender",
+    "photo_url",
+    "yob",
+    "fetched_at",
+    "cached",
+    "stale",
+)
 
 
 class CacheMiss(Exception):
@@ -29,6 +64,7 @@ class ApiService:
         calendar_ttl: int = CALENDAR_TTL,
         event_ttl: int = EVENT_TTL,
         snapshot_ttl: int = SNAPSHOT_TTL,
+        athlete_ttl: int = ATHLETE_TTL,
     ) -> None:
         self.scraper = scraper
         self.events = events
@@ -36,6 +72,7 @@ class ApiService:
         self.calendar_ttl = calendar_ttl
         self.event_ttl = event_ttl
         self.snapshot_ttl = snapshot_ttl
+        self.athlete_ttl = athlete_ttl
 
     def health(self) -> dict[str, Any]:
         return {
@@ -103,6 +140,7 @@ class ApiService:
         age: str,
         season: int | None = None,
         kind: str | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         catalog = self.rankings.get_catalog(federation, season=season)
         if catalog is None:
@@ -112,8 +150,10 @@ class ApiService:
         )
         if not matches:
             raise CacheMiss("No published list matches those filters in the local database.")
-        ranking = self.rankings.get_ranking(matches[0].ranking_id)
+        ranking = self.rankings.get_ranking(matches[0].ranking_id, as_of=as_of)
         if ranking is None:
+            if as_of:
+                raise CacheMiss(f"No ranking snapshot at or before {as_of}.")
             raise CacheMiss(
                 f"Catalog points at ranking {matches[0].ranking_id} but the list is not stored yet."
             )
@@ -121,7 +161,36 @@ class ApiService:
         payload["group"] = matches[0].group
         payload["key"] = matches[0].key
         payload["federation"] = catalog.federation.to_dict()
+        payload["as_of"] = as_of
+        payload["history"] = self.rankings.list_snapshots(matches[0].ranking_id)
         return payload
+
+    def athlete(
+        self,
+        athlete_id: int,
+        refresh: bool = False,
+        include: str | list[str] | None = None,
+    ) -> dict[str, Any]:
+        sections = parse_athlete_include(include)
+        history = self.rankings.athlete_history(athlete_id)
+        try:
+            payload = self._cached(
+                "athlete",
+                str(athlete_id),
+                self.athlete_ttl,
+                refresh=refresh,
+                fetch=lambda: self.scraper.athlete(athlete_id).to_dict(),
+            )
+        except CacheMiss:
+            if history is None:
+                raise CacheMiss(f"No athlete profile or ranking history for athlete {athlete_id}.")
+            return slice_athlete_payload(history, sections)
+        if history:
+            payload["rankings"] = history["rankings"]
+            payload["club_history"] = history["clubs"]
+            if payload.get("yob") is None:
+                payload["yob"] = history.get("yob")
+        return slice_athlete_payload(payload, sections)
 
     def clubs(self) -> dict[str, Any]:
         clubs = self.rankings.list_clubs()
@@ -217,6 +286,45 @@ def _wrap(
         "cached": cached,
         "stale": stale,
     }
+
+
+def parse_athlete_include(value: str | list[str] | None) -> frozenset[str] | None:
+    """Return requested biography sections, or None to keep the full payload."""
+    parts: list[str] = []
+    if isinstance(value, str):
+        parts = value.split(",")
+    elif value:
+        for item in value:
+            parts.extend(str(item).split(","))
+    wanted: set[str] = set()
+    unknown: list[str] = []
+    for part in parts:
+        name = part.strip().lower().replace("-", "_")
+        if not name:
+            continue
+        if name in ATHLETE_INCLUDE_ALIASES:
+            wanted.update(ATHLETE_INCLUDE_ALIASES[name])
+            continue
+        if name in ATHLETE_SECTIONS:
+            wanted.add(name)
+            continue
+        unknown.append(part.strip())
+    if unknown:
+        valid = ", ".join(sorted(ATHLETE_SECTIONS | set(ATHLETE_INCLUDE_ALIASES)))
+        raise ValueError(f"Unknown athlete include {unknown[0]!r}. Use {valid}.")
+    return frozenset(wanted) or None
+
+
+def slice_athlete_payload(
+    payload: dict[str, Any],
+    include: frozenset[str] | None,
+) -> dict[str, Any]:
+    if include is None:
+        return payload
+    sliced = {key: payload[key] for key in ATHLETE_IDENTITY_KEYS if key in payload}
+    for section in sorted(include):
+        sliced[section] = payload[section] if section in payload else []
+    return sliced
 
 
 def _cache_key(params: dict[str, str | None]) -> str:

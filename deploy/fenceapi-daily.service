@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily fenceapi scrape (calendar + current rankings)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fenceapi
+# Rankings refresh can run for hours; the job also sleeps until a random hour.
+# Timing, window, and jobs are read from fenceapi.toml in WorkingDirectory.
+TimeoutStartSec=36h
+Nice=10
+ExecStart=/opt/fenceapi/.venv/bin/python -m fenceapi daily-sync

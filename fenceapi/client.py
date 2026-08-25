@@ -28,12 +28,14 @@ class HttpClient:
         user_agent: str = DEFAULT_USER_AGENT,
         timeout: float = 30.0,
         min_interval: float = 1.0,
+        jitter: float = 0.0,
         max_retries: int = 3,
         opener: urllib.request.OpenerDirector | None = None,
     ) -> None:
         self.user_agent = user_agent
         self.timeout = timeout
         self.min_interval = min_interval
+        self.jitter = jitter
         self.max_retries = max_retries
         self._last_request_at = 0.0
         self._opener = opener or urllib.request.build_opener()
@@ -94,4 +96,6 @@ class HttpClient:
         wait_for = self.min_interval - elapsed
         if wait_for > 0:
             time.sleep(wait_for)
+        if self.jitter > 0:
+            time.sleep(random.uniform(0, self.jitter))
         self._last_request_at = time.monotonic()

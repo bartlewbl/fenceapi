@@ -8,11 +8,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from fenceapi.client import HttpClient
 from fenceapi.event_store import EventStore
 from fenceapi.rate_limit import (
-    DEFAULT_RATE_LIMIT,
-    DEFAULT_RATE_WINDOW,
     RateLimiter,
     client_ip,
     is_exempt,
@@ -20,6 +17,7 @@ from fenceapi.rate_limit import (
 )
 from fenceapi.scraper import Scraper
 from fenceapi.service import ApiService, CacheMiss
+from fenceapi.settings import Settings, load_settings, make_client
 from fenceapi.store import RankingStore
 
 DEFAULT_ORIGINS = [
@@ -35,34 +33,40 @@ DEFAULT_ORIGINS = [
 def create_app(
     service: ApiService | None = None,
     *,
+    settings: Settings | None = None,
     rate_limit: int | None = None,
     rate_window: float | None = None,
 ) -> FastAPI:
+    cfg = settings if settings is not None else load_settings()
+    if service is None:
+        service = service_from_settings(cfg)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if getattr(app.state, "service", None) is None:
-            app.state.service = _default_service()
+            app.state.service = service_from_settings(load_settings())
         yield
 
-    limit = _env_rate_limit() if rate_limit is None else rate_limit
-    window = _env_rate_window() if rate_window is None else rate_window
+    limit = rate_limit if rate_limit is not None else _env_int("FENCEAPI_RATE_LIMIT", cfg.api.rate_limit)
+    window = rate_window if rate_window is not None else _env_float("FENCEAPI_RATE_WINDOW", cfg.api.rate_window)
     limiter = RateLimiter(limit, window) if limit > 0 else None
 
     app = FastAPI(
         title="fenceapi",
         version="0.1.0",
         description=(
-            "Open-source JSON API for fencing calendars, tournaments, rankings, and clubs. "
-            f"Public hosted instances allow {DEFAULT_RATE_LIMIT} requests per minute per IP."
+            "Open-source JSON API for fencing calendars, tournaments, athlete profiles, rankings, and clubs. "
+            f"Public hosted instances allow {limit if limit > 0 else 'unlimited'} requests per minute per IP."
         ),
         lifespan=lifespan,
     )
     app.state.service = service
     app.state.rate_limiter = limiter
+    app.state.api_key = os.environ.get("FENCEAPI_API_KEY") or cfg.api.api_key
 
     @app.middleware("http")
     async def require_api_key(request: Request, call_next):
-        key = os.environ.get("FENCEAPI_API_KEY")
+        key = getattr(request.app.state, "api_key", None)
         public = request.url.path in {"/", "/docs", "/redoc", "/openapi.json", "/v1/health"}
         if key and not public and request.headers.get("x-api-key") != key:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -94,7 +98,7 @@ def create_app(
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_cors_origins(),
+        allow_origins=_cors_origins(cfg),
         allow_origin_regex=r"https://.*\.boutfence\.com",
         allow_credentials=False,
         allow_methods=["GET"],
@@ -179,12 +183,36 @@ def create_app(
         age: str,
         season: int | None = None,
         kind: str | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
         try:
             return _svc(app).ranking_list(
-                federation, weapon, gender, age, season=season, kind=kind
+                federation, weapon, gender, age, season=season, kind=kind, as_of=as_of
             )
-        except (CacheMiss, ValueError) as exc:
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CacheMiss as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/v1/athletes/{athlete_id}")
+    def athlete(
+        athlete_id: int,
+        refresh: bool = False,
+        include: str | None = Query(
+            None,
+            description=(
+                "Comma-separated sections to keep, e.g. medals or overview. "
+                "Options: medals, exams, results, match_stats, season_rankings, "
+                "selections, memberships, rankings, club_history; "
+                "aliases: overview, profile, history."
+            ),
+        ),
+    ) -> dict[str, Any]:
+        try:
+            return _svc(app).athlete(athlete_id, refresh=refresh, include=include)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except CacheMiss as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/v1/clubs")
@@ -205,33 +233,53 @@ def _cached_call(fn, *args, **kwargs) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _cors_origins() -> list[str]:
+def _cors_origins(settings: Settings) -> list[str]:
     extra = [part.strip() for part in os.environ.get("FENCEAPI_CORS", "").split(",") if part.strip()]
-    return extra or DEFAULT_ORIGINS
+    if extra:
+        return extra
+    if settings.api.cors:
+        return list(settings.api.cors)
+    return list(DEFAULT_ORIGINS)
 
 
-def _env_rate_limit() -> int:
-    raw = os.environ.get("FENCEAPI_RATE_LIMIT")
+def _env_int(name: str, fallback: int) -> int:
+    raw = os.environ.get(name)
     if raw is None or raw == "":
-        return DEFAULT_RATE_LIMIT
+        return fallback
     return int(raw)
 
 
-def _env_rate_window() -> float:
-    raw = os.environ.get("FENCEAPI_RATE_WINDOW")
+def _env_float(name: str, fallback: float) -> float:
+    raw = os.environ.get(name)
     if raw is None or raw == "":
-        return DEFAULT_RATE_WINDOW
+        return fallback
     return float(raw)
 
 
-def _default_service() -> ApiService:
-    interval = float(os.environ.get("FENCEAPI_INTERVAL", "1.0"))
+def service_from_settings(
+    settings: Settings,
+    *,
+    interval: float | None = None,
+    lang: str | None = None,
+    rankings_db: str | None = None,
+    events_db: str | None = None,
+) -> ApiService:
+    interval_env = os.environ.get("FENCEAPI_INTERVAL")
+    if interval is None and interval_env not in (None, ""):
+        interval = float(interval_env)
     return ApiService(
-        scraper=Scraper(client=HttpClient(min_interval=interval)),
-        events=EventStore(os.environ.get("FENCEAPI_EVENTS_DB", "data/events.sqlite")),
-        rankings=RankingStore(os.environ.get("FENCEAPI_RANKINGS_DB", "data/rankings.sqlite")),
-        calendar_ttl=int(os.environ.get("FENCEAPI_CALENDAR_TTL", str(30 * 60))),
-        event_ttl=int(os.environ.get("FENCEAPI_EVENT_TTL", str(15 * 60))),
+        scraper=Scraper(
+            client=make_client(settings.scrape, interval=interval),
+            lang=lang or settings.scrape.lang,
+        ),
+        events=EventStore(events_db or os.environ.get("FENCEAPI_EVENTS_DB") or settings.paths.events_db),
+        rankings=RankingStore(
+            rankings_db or os.environ.get("FENCEAPI_RANKINGS_DB") or settings.paths.rankings_db
+        ),
+        calendar_ttl=_env_int("FENCEAPI_CALENDAR_TTL", settings.api.calendar_ttl),
+        event_ttl=_env_int("FENCEAPI_EVENT_TTL", settings.api.event_ttl),
+        snapshot_ttl=_env_int("FENCEAPI_SNAPSHOT_TTL", settings.api.snapshot_ttl),
+        athlete_ttl=_env_int("FENCEAPI_ATHLETE_TTL", settings.api.athlete_ttl),
     )
 
 

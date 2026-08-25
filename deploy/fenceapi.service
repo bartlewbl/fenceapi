@@ -5,9 +5,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/fenceapi
-Environment=FENCEAPI_INTERVAL=1.0
-Environment=FENCEAPI_RATE_LIMIT=100
-ExecStart=/opt/fenceapi/.venv/bin/python -m fenceapi serve --host 127.0.0.1 --port 8000
+# Host, port, rate limit, scrape interval, and DB paths come from fenceapi.toml
+ExecStart=/opt/fenceapi/.venv/bin/python -m fenceapi serve
 Restart=on-failure
 RestartSec=5
 

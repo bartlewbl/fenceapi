@@ -1,0 +1,57 @@
+# fenceapi settings
+# -----------------
+# Loaded from the working directory (or --config / FENCEAPI_CONFIG).
+# Optional overlay: fenceapi.local.toml in the same folder (not committed).
+# Used by the HTTP API, daily scrape, and one-off CLI fetches.
+# CLI flags override these values for a single run.
+
+[scrape]
+# Seconds to wait between requests to Ophardt / Fencing Worldwide.
+# Used by one-off CLI fetches and by the API on a cache miss. Stay at 1s or slower.
+interval = 1.0
+# Extra random delay (seconds) after each gap, so the cadence is not a metronome.
+jitter = 0.25
+lang = "en"
+# Leave commented to use the built-in polite User-Agent.
+# user_agent = "fenceapi/0.1 (+https://github.com/boutfence; contact via Boutfence)"
+
+[api]
+host = "127.0.0.1"
+port = 8000
+# Requests per IP per window. 0 disables the limiter.
+rate_limit = 100
+rate_window = 60
+# Empty = Boutfence + localhost. Example: ["https://example.com"]
+cors = []
+# Require X-API-Key on data routes. Prefer fenceapi.local.toml for a real key.
+api_key = ""
+# How long cached upstream pages stay fresh (seconds).
+calendar_ttl = 1800
+event_ttl = 900
+snapshot_ttl = 600
+athlete_ttl = 3600
+
+[daily]
+# systemd/cron starts the job after midnight; it then sleeps until a random
+# time in this local-time window so the hour is different each day.
+window = "06:00-22:00"
+# Slower than [scrape] — the daily job walks many ranking pages.
+interval = 2.0
+jitter = 1.0
+calendar = true
+rankings = true
+# Optional NOC filter for the calendar refresh, e.g. "GER". Empty = all nations.
+nation = ""
+# Fetch each event page / public entry list during the calendar refresh.
+details = false
+entries = false
+# Max events to expand when details or entries are on. 0 = no limit.
+limit = 0
+# Restrict rankings refresh to these federations. Empty = every region.
+federations = []
+
+[paths]
+rankings_db = "data/rankings.sqlite"
+events_db = "data/events.sqlite"
+clubs = "data/clubs.json"
+lock = "data/daily-sync.lock"

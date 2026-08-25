@@ -4,7 +4,9 @@ Description=Refresh fenceapi calendar cache every 30 minutes
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=30min
+RandomizedDelaySec=10min
 Persistent=true
+AccuracySec=1min
 
 [Install]
 WantedBy=timers.target

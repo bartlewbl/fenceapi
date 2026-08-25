@@ -27,6 +27,10 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.json.tmp
 data/rankings-sync.log
+data/daily-sync.lock
+
+# Machine-local scrape settings (overlay on fenceapi.toml)
+fenceapi.local.toml
 
 # OS and editors
 .DS_Store

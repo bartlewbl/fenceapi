@@ -7,16 +7,18 @@ from fastapi.testclient import TestClient
 from fenceapi.api import create_app
 from fenceapi.event_store import EventStore
 from fenceapi.models import (
+    AthleteProfile,
     CalendarEvent,
     EventDetail,
     HomePage,
+    MedalCount,
     RankingCatalog,
     RankingCategory,
     RankingEntry,
     RankingFederation,
     RankingList,
 )
-from fenceapi.service import ApiService
+from fenceapi.service import ApiService, parse_athlete_include
 from fenceapi.store import RankingStore
 
 
@@ -108,7 +110,7 @@ def _seed_rankings(store: RankingStore) -> None:
             gender="men",
             age_class="senior",
             kind="individual",
-            calculated_on=None,
+            calculated_on="24.07.2026. 11:59",
             season=2026,
             entries=[
                 RankingEntry(1, 155.5, 0, "BELLMANN Lukas", 39083, "GER", "NW TSV Bayer 04 Leverkusen", 1995),
@@ -149,8 +151,94 @@ def test_rankings_and_clubs_from_sqlite(tmp_path: Path) -> None:
     assert catalog.json()["season"] == 2026
     listing = client.get("/v1/rankings/ger/epee/men/senior")
     assert listing.json()["entries"][0]["name"] == "BELLMANN Lukas"
+    assert listing.json()["history"]
     clubs = client.get("/v1/clubs")
     assert clubs.json()["count"] >= 1
+
+
+def test_athlete_history_and_as_of(tmp_path: Path) -> None:
+    client, _, service = _app(tmp_path)
+    service.rankings.save_ranking(
+        RankingList(
+            ranking_id=22576,
+            url="https://example/22576",
+            title="Epee men senior",
+            weapon="epee",
+            gender="men",
+            age_class="senior",
+            kind="individual",
+            calculated_on="12.08.2026. 10:00",
+            season=2026,
+            entries=[
+                RankingEntry(2, 140, 0, "BELLMANN Lukas", 39083, "GER", "FC Berlin", 1995),
+            ],
+        )
+    )
+    athlete = client.get("/v1/athletes/39083")
+    assert athlete.status_code == 200
+    body = athlete.json()
+    assert body["name"] == "BELLMANN Lukas"
+    assert len(body["rankings"]) == 2
+    past = client.get("/v1/rankings/ger/epee/men/senior", params={"as_of": "2026-07-24"})
+    assert past.json()["entries"][0]["clubs"] == "NW TSV Bayer 04 Leverkusen"
+    live = client.get("/v1/rankings/ger/epee/men/senior")
+    assert live.json()["entries"][0]["clubs"] == "FC Berlin"
+    missing = client.get("/v1/athletes/1")
+    assert missing.status_code == 404
+    bad = client.get("/v1/rankings/ger/epee/men/senior", params={"as_of": "not-a-date"})
+    assert bad.status_code == 400
+
+
+def test_athlete_profile_is_cached(tmp_path: Path) -> None:
+    class ProfileScraper(FakeScraper):
+        def __init__(self) -> None:
+            super().__init__()
+            self.athlete_calls = 0
+
+        def athlete(self, athlete_id):
+            self.athlete_calls += 1
+            return AthleteProfile(
+                athlete_id=int(athlete_id),
+                url=f"https://fencing.ophardt.online/en/biography/athlete/{athlete_id}",
+                name="Lukas Bellmann",
+                nation="GER",
+                weapons=["epee"],
+                age=31,
+                gender="men",
+                medals=[MedalCount("World Championships", 1, 0, 0)],
+            )
+
+    client, scraper, _ = _app(tmp_path, scraper=ProfileScraper())
+    first = client.get("/v1/athletes/39083")
+    second = client.get("/v1/athletes/39083")
+    assert first.status_code == 200
+    body = first.json()
+    assert body["name"] == "Lukas Bellmann"
+    assert body["weapons"] == ["epee"]
+    assert body["cached"] is False
+    assert second.json()["cached"] is True
+    assert scraper.athlete_calls == 1
+    assert body["rankings"][0]["rank"] == 1
+    assert body["club_history"]
+
+    medals = client.get("/v1/athletes/39083", params={"include": "medals"})
+    slim = medals.json()
+    assert slim["name"] == "Lukas Bellmann"
+    assert slim["medals"][0]["gold"] == 1
+    assert "results" not in slim
+    assert "rankings" not in slim
+    overview = client.get("/v1/athletes/39083", params={"include": "overview"})
+    assert set(overview.json()) >= {"name", "medals", "exams", "cached"}
+    assert "results" not in overview.json()
+    bad_include = client.get("/v1/athletes/39083", params={"include": "photos"})
+    assert bad_include.status_code == 400
+
+
+def test_parse_athlete_include() -> None:
+    assert parse_athlete_include(None) is None
+    assert parse_athlete_include("medals") == frozenset({"medals"})
+    assert parse_athlete_include("medals, exams") == frozenset({"medals", "exams"})
+    assert parse_athlete_include("overview") == frozenset({"medals", "exams"})
 
 
 def test_missing_ranking_is_404(tmp_path: Path) -> None:
@@ -196,3 +284,23 @@ def test_rate_limit_can_be_disabled(tmp_path: Path) -> None:
     for _ in range(5):
         assert client.get("/v1/rankings").status_code == 200
     assert "rate_limit" not in client.get("/").json()
+
+
+def test_create_app_uses_api_settings(tmp_path: Path) -> None:
+    from fenceapi.settings import ApiSettings, Settings
+
+    scraper = FakeScraper()
+    service = ApiService(
+        scraper,
+        EventStore(tmp_path / "events.sqlite"),
+        RankingStore(tmp_path / "rankings.sqlite"),
+        calendar_ttl=3600,
+        event_ttl=3600,
+    )
+    cfg = Settings(api=ApiSettings(rate_limit=2, api_key="secret"))
+    client = TestClient(create_app(service, settings=cfg))
+    assert client.get("/").json()["rate_limit"]["requests"] == 2
+    assert client.get("/v1/calendar").status_code == 401
+    assert client.get("/v1/calendar", headers={"X-API-Key": "secret"}).status_code == 200
+    assert client.get("/v1/health").status_code == 200
+

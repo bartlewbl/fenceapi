@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from fenceapi.client import HttpClient
+from fenceapi.biography_parsers import parse_biography
 from fenceapi.calendar_parsers import parse_calendar, parse_event, parse_inscriptions
 from fenceapi.models import (
+    AthleteProfile,
     CalendarEvent,
     CompetitionListing,
     EventDetail,
@@ -33,11 +35,13 @@ from fenceapi.ranking_parsers import (
 )
 from fenceapi.urls import (
     archive_url,
+    biography_url,
     home_url,
     ophardt_calendar_json_url,
     ophardt_calendar_url,
     ophardt_entries_url,
     ophardt_event_url,
+    parse_athlete_id,
     parse_event_id,
     parse_resource_key,
     ranking_show_url,
@@ -144,6 +148,13 @@ class Scraper:
     def ranking(self, ranking_id: int) -> RankingList:
         url = ranking_show_url(ranking_id, self.lang)
         return parse_ranking_list(self.client.get_text(url), url, ranking_id)
+
+    def athlete(self, athlete_id: str | int) -> AthleteProfile:
+        resolved = parse_athlete_id(athlete_id)
+        if resolved is None:
+            raise ValueError(f"Invalid athlete id '{athlete_id}'.")
+        url = biography_url(resolved, self.lang)
+        return parse_biography(self.client.get_text(url), url, resolved)
 
     def rankings(
         self,

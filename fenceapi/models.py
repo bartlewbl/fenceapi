@@ -461,3 +461,141 @@ class EventDetail:
         if self.inscriptions:
             payload["inscriptions"] = [item.to_dict() for item in self.inscriptions]
         return payload
+
+
+@dataclass(slots=True)
+class MedalCount:
+    title: str
+    gold: int
+    silver: int
+    bronze: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteExam:
+    date: str | None
+    name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteCompetitionResult:
+    rank: int | None
+    date_start: str | None
+    date_end: str | None
+    city: str | None
+    nation: str | None
+    competition: str
+    category: str
+    competition_id: int | None = None
+    url: str | None = None
+    weapon: str | None = None
+    gender: str | None = None
+    age_class: str | None = None
+    kind: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteResultGroup:
+    group: str
+    results: list[AthleteCompetitionResult] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group": self.group,
+            "count": len(self.results),
+            "results": [item.to_dict() for item in self.results],
+        }
+
+
+@dataclass(slots=True)
+class AthleteSeasonRanking:
+    rank: int | None
+    points: float | None
+    season: int | None
+    title: str
+    level: str
+    category: str
+    ranking_id: int | None = None
+    url: str | None = None
+    weapon: str | None = None
+    gender: str | None = None
+    age_class: str | None = None
+    kind: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteSelection:
+    season: str
+    selection: str
+    weapon: str | None = None
+    federation: str | None = None
+    training_center: str | None = None
+    coach: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteMembership:
+    club: str
+    nation: str | None = None
+    type: str | None = None
+    start: str | None = None
+    end: str | None = None
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class AthleteProfile:
+    athlete_id: int
+    url: str
+    name: str
+    nation: str | None = None
+    clubs: str | None = None
+    weapons: list[str] = field(default_factory=list)
+    age: int | None = None
+    gender: str | None = None
+    photo_url: str | None = None
+    medals: list[MedalCount] = field(default_factory=list)
+    exams: list[AthleteExam] = field(default_factory=list)
+    results: list[AthleteResultGroup] = field(default_factory=list)
+    match_stats: list[dict[str, Any]] = field(default_factory=list)
+    season_rankings: list[AthleteSeasonRanking] = field(default_factory=list)
+    selections: list[AthleteSelection] = field(default_factory=list)
+    memberships: list[AthleteMembership] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "athlete_id": self.athlete_id,
+            "url": self.url,
+            "name": self.name,
+            "nation": self.nation,
+            "clubs": self.clubs,
+            "weapons": self.weapons,
+            "age": self.age,
+            "gender": self.gender,
+            "photo_url": self.photo_url,
+            "medals": [item.to_dict() for item in self.medals],
+            "exams": [item.to_dict() for item in self.exams],
+            "results": [item.to_dict() for item in self.results],
+            "match_stats": self.match_stats,
+            "season_rankings": [item.to_dict() for item in self.season_rankings],
+            "selections": [item.to_dict() for item in self.selections],
+            "memberships": [item.to_dict() for item in self.memberships],
+        }

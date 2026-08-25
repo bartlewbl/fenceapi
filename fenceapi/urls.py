@@ -122,6 +122,21 @@ def parse_event_id(value: str | int) -> int | None:
 
 RANKING_SHOW_RE = re.compile(r"/search/rankings/show/(\d+)")
 BIOGRAPHY_RE = re.compile(r"/biography/athlete/(\d+)")
+RESULTS_COMPETITION_RE = re.compile(r"/search/results-competition/(\d+)")
+
+
+def biography_url(athlete_id: int, lang: str = DEFAULT_LANG) -> str:
+    return f"{OPHARDT_BASE}/{lang}/biography/athlete/{athlete_id}"
+
+
+def parse_athlete_id(value: str | int) -> int | None:
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    match = BIOGRAPHY_RE.search(text) or ATHLETE_RE.search(text)
+    return int(match.group(1)) if match else None
 
 
 def rankings_index_url(lang: str = DEFAULT_LANG) -> str:
