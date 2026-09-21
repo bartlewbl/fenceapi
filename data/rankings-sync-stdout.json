@@ -1,0 +1,27 @@
+{
+  "scraped_at": "2026-08-21T12:08:29.231384+00:00",
+  "federations": 51,
+  "catalogs": 1371,
+  "lists_fetched": 10743,
+  "lists_skipped": 127,
+  "entries": 290218,
+  "clubs": 1532,
+  "clubs_path": "data/clubs.json",
+  "errors": [
+    "list 12759: The read operation timed out",
+    "list 12735: [Errno 51] Network is unreachable [https://fencing.ophardt.online/en/search/rankings/show/12735]",
+    "list 12737: [Errno 51] Network is unreachable [https://fencing.ophardt.online/en/search/rankings/show/12737]",
+    "list 12789: [Errno 51] Network is unreachable [https://fencing.ophardt.online/en/search/rankings/show/12789]",
+    "list 12791: [Errno 8] nodename nor servname provided, or not known [https://fencing.ophardt.online/en/search/rankings/show/12791]",
+    "catalog 151 2025: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "catalog 151 2024: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "catalog 151 2023: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "catalog 151 2022: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "catalog 151 2021: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "catalog 151 2020: Unknown weapon 'All'. Use epee, foil, or sabre.",
+    "list 15055: Remote end closed connection without response",
+    "list 11979: [Errno 51] Network is unreachable [https://fencing.ophardt.online/en/search/rankings/show/11979]",
+    "list 12009: [Errno 8] nodename nor servname provided, or not known [https://fencing.ophardt.online/en/search/rankings/show/12009]",
+    "list 22821: IncompleteRead(0 bytes read)"
+  ]
+}
