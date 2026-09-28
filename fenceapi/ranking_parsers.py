@@ -155,8 +155,10 @@ def parse_ranking_list(html: str, url: str, ranking_id: int) -> RankingList:
     title = title_el.get_text(" ", strip=True) if title_el else f"Ranking {ranking_id}"
     season = _season_from_title(title)
     meta = _parse_ranking_meta(soup)
-    competitions = _parse_ranking_competitions(soup)
-    entries = _parse_ranking_entries(soup, competitions)
+    columns = _header_competitions(soup)
+    competitions = _parse_ranking_competitions(soup, columns=columns)
+    # Point cells line up with the raw header, including a repeated comp link.
+    entries = _parse_ranking_entries(soup, columns or competitions)
     return RankingList(
         ranking_id=ranking_id,
         url=url,
@@ -354,13 +356,20 @@ def _parse_ranking_meta(soup: BeautifulSoup) -> dict[str, str | None]:
     return meta
 
 
-def _parse_ranking_competitions(soup: BeautifulSoup) -> list[RankingCompetition]:
-    columns = _header_competitions(soup)
+def _parse_ranking_competitions(
+    soup: BeautifulSoup,
+    columns: list[RankingCompetition] | None = None,
+) -> list[RankingCompetition]:
+    columns = _header_competitions(soup) if columns is None else columns
     details = _footer_competitions(soup)
     if not columns:
         return list(details.values())
     merged: list[RankingCompetition] = []
-    for index, item in enumerate(columns, start=1):
+    seen: set[int] = set()
+    for item in columns:
+        if item.competition_id in seen:
+            continue
+        seen.add(item.competition_id)
         extra = details.get(item.competition_id)
         if extra is not None:
             item.title = extra.title or item.title
@@ -374,7 +383,7 @@ def _parse_ranking_competitions(soup: BeautifulSoup) -> list[RankingCompetition]
             item.point_rule_id = extra.point_rule_id
             item.multiplier = extra.multiplier
             item.starters = extra.starters
-        item.position = index
+        item.position = len(merged) + 1
         merged.append(item)
     return merged
 
@@ -526,7 +535,11 @@ def _parse_table_points(
         return []
     point_cells = [cell for cell in cells if "rankingfield" in " ".join(cell.get("class") or [])]
     results: list[RankingTableResult] = []
+    seen: set[int] = set()
     for competition, cell in zip(competitions, point_cells, strict=False):
+        if competition.competition_id in seen:
+            continue
+        seen.add(competition.competition_id)
         classes = " ".join(cell.get("class") or [])
         if "rankingfield-empty" in classes:
             continue

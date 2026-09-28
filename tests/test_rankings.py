@@ -123,6 +123,35 @@ def test_parse_ranking_table_points() -> None:
     ]
 
 
+def test_duplicate_competition_column_is_kept_once() -> None:
+    html = """
+    <table class="table rankingbody">
+      <tr>
+        <th>Rank</th><th>Points</th><th>T-P</th><th>Name</th>
+        <th class="ranking-rotate"><span><a href="#comp-197542">13.09.2025 Berlin (Senior)<br/>Berlin Open</a></span></th>
+        <th class="ranking-rotate"><span><a href="#comp-197542">13.09.2025 Berlin (Senior)<br/>Berlin Open</a></span></th>
+        <th class="ranking-rotate"><span><a href="#comp-203263">28.03.2026 Berlin (Senior)<br/>OSC</a></span></th>
+      </tr>
+      <tr>
+        <td class="ranking">1</td>
+        <td class="ranking">40</td>
+        <td class="ranking">0</td>
+        <td class="ranking"><a class="dropdown-toggle" href="#">HADASCHIK Markus</a></td>
+        <td class="rankingfield ranking-counted"><span title="Platz: 3">32</span></td>
+        <td class="rankingfield ranking-counted"><span title="Platz: 9">10</span></td>
+        <td class="rankingfield ranking-counted"><span title="Platz: 5">28</span></td>
+      </tr>
+    </table>
+    """
+    listing = parse_ranking_list(html, ranking_show_url(22639), 22639)
+    assert [item.competition_id for item in listing.competitions] == [197542, 203263]
+    assert [item.position for item in listing.competitions] == [1, 2]
+    assert [(item.competition_id, item.points) for item in listing.entries[0].results] == [
+        (197542, 32),
+        (203263, 28),
+    ]
+
+
 def test_parse_club_mentions() -> None:
     from fenceapi.ranking_parsers import parse_club_mentions
 
