@@ -91,7 +91,7 @@ and `rate_window`), or pass `python -m fenceapi serve --rate-limit 100`. Use
 | `GET` | `/v1/current?nation=ger` | Fencing Worldwide home |
 | `GET` | `/v1/rankings` | Federations in the rankings DB |
 | `GET` | `/v1/rankings/ger` | Category catalog |
-| `GET` | `/v1/rankings/ger/epee/men/senior` | Stored ranking list (`?as_of=YYYY-MM-DD` for a snapshot) |
+| `GET` | `/v1/rankings/ger/epee/men/senior` | Stored ranking list (`?as_of=YYYY-MM-DD` for a snapshot), including each fencer's points from every competition table |
 | `GET` | `/v1/athletes/33233` | Ophardt biography (cached ~1 hour) plus ranking history |
 | `GET` | `/v1/clubs` | Club list |
 
@@ -303,7 +303,11 @@ only has a subset of ages published; use `--season 2025` for a fuller grid.
 `--all-regions --all-seasons` stores each list once. `--refresh-current` re-fetches
 the current season (or `--season`) and appends a snapshot only when the table
 changed. Past copies stay queryable via `GET /v1/athletes/{id}` and
-`?as_of=YYYY-MM-DD` on a ranking list. Clubs are rebuilt from the latest snapshot
+`?as_of=YYYY-MM-DD` on a ranking list. Each snapshot also keeps the competitions
+that feed the list and the points each fencer took from those tables, including
+results in parentheses that did not count toward the total. They are
+`competitions` and `entries[].results` on a ranking list, and `results` on each
+item in an athlete's `rankings` history. Clubs are rebuilt from the latest snapshot
 only.
 
 The older nation JSON widget is still available as

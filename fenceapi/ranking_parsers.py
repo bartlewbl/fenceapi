@@ -9,9 +9,11 @@ from fenceapi.models import (
     ClubMention,
     RankingCatalog,
     RankingCategory,
+    RankingCompetition,
     RankingEntry,
     RankingFederation,
     RankingList,
+    RankingTableResult,
 )
 from fenceapi.urls import (
     BIOGRAPHY_RE,
@@ -153,7 +155,8 @@ def parse_ranking_list(html: str, url: str, ranking_id: int) -> RankingList:
     title = title_el.get_text(" ", strip=True) if title_el else f"Ranking {ranking_id}"
     season = _season_from_title(title)
     meta = _parse_ranking_meta(soup)
-    entries = _parse_ranking_entries(soup)
+    competitions = _parse_ranking_competitions(soup)
+    entries = _parse_ranking_entries(soup, competitions)
     return RankingList(
         ranking_id=ranking_id,
         url=url,
@@ -165,6 +168,7 @@ def parse_ranking_list(html: str, url: str, ranking_id: int) -> RankingList:
         calculated_on=meta.get("calculated_on"),
         season=season,
         entries=entries,
+        competitions=competitions,
     )
 
 
@@ -350,10 +354,119 @@ def _parse_ranking_meta(soup: BeautifulSoup) -> dict[str, str | None]:
     return meta
 
 
-def _parse_ranking_entries(soup: BeautifulSoup) -> list[RankingEntry]:
+def _parse_ranking_competitions(soup: BeautifulSoup) -> list[RankingCompetition]:
+    columns = _header_competitions(soup)
+    details = _footer_competitions(soup)
+    if not columns:
+        return list(details.values())
+    merged: list[RankingCompetition] = []
+    for index, item in enumerate(columns, start=1):
+        extra = details.get(item.competition_id)
+        if extra is not None:
+            item.title = extra.title or item.title
+            item.date_start = extra.date_start or item.date_start
+            item.date_end = extra.date_end or item.date_end
+            item.city = extra.city or item.city
+            item.nation = extra.nation or item.nation
+            item.age_class = extra.age_class or item.age_class
+            item.group = extra.group or item.group
+            item.point_rule = extra.point_rule
+            item.point_rule_id = extra.point_rule_id
+            item.multiplier = extra.multiplier
+            item.starters = extra.starters
+        item.position = index
+        merged.append(item)
+    return merged
+
+
+def _header_competitions(soup: BeautifulSoup) -> list[RankingCompetition]:
     table = soup.select_one("table.rankingbody")
     if table is None:
         return []
+    header = table.find("tr")
+    if header is None:
+        return []
+    competitions: list[RankingCompetition] = []
+    for cell in header.find_all("th", recursive=False):
+        link = cell.find("a", href=re.compile(r"comp-(\d+)"))
+        if link is None:
+            continue
+        match = re.search(r"comp-(\d+)", link["href"])
+        if match is None:
+            continue
+        lines = [text.strip() for text in link.stripped_strings if text.strip()]
+        date_start = city = age = None
+        title = lines[-1] if lines else ""
+        if lines:
+            head = re.match(
+                r"(\d{2}\.\d{2}\.\d{4})\s+(.+?)\s+\(([^)]+)\)\s*$",
+                lines[0],
+            )
+            if head:
+                date_start = _iso_date(head.group(1))
+                city = head.group(2).strip() or None
+                age = _age_label(head.group(3))
+                if len(lines) == 1:
+                    title = ""
+        competitions.append(
+            RankingCompetition(
+                competition_id=int(match.group(1)),
+                title=title,
+                date_start=date_start,
+                city=city,
+                age_class=age or _age_label(link.get("title") or ""),
+            )
+        )
+    return competitions
+
+
+def _footer_competitions(soup: BeautifulSoup) -> dict[int, RankingCompetition]:
+    table = soup.select_one("table.rankingheader")
+    if table is None:
+        return {}
+    found: dict[int, RankingCompetition] = {}
+    for row in table.find_all("tr"):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) < 10:
+            continue
+        anchor = cells[0].find("a", attrs={"name": re.compile(r"comp-\d+")})
+        if anchor is None:
+            continue
+        match = re.search(r"comp-(\d+)", anchor.get("name") or "")
+        if match is None:
+            continue
+        point_link = row.find("a", href=re.compile(r"show-pointrule/(\d+)"))
+        point_rule_id = None
+        if point_link is not None:
+            rule_match = re.search(r"show-pointrule/(\d+)", point_link["href"])
+            if rule_match:
+                point_rule_id = int(rule_match.group(1))
+        nation_match = re.search(r"\b([A-Z]{3})\b", cells[4].get_text(" ", strip=True))
+        found[int(match.group(1))] = RankingCompetition(
+            competition_id=int(match.group(1)),
+            title=cells[2].get_text(" ", strip=True),
+            city=cells[3].get_text(" ", strip=True) or None,
+            nation=nation_match.group(1) if nation_match else None,
+            date_start=_iso_date(cells[5].get_text(" ", strip=True)),
+            date_end=_iso_date(cells[6].get_text(" ", strip=True)),
+            age_class=_age_label(cells[7].get_text(" ", strip=True)),
+            group=cells[8].get_text(" ", strip=True) or None,
+            point_rule=cells[9].get_text(" ", strip=True) or None,
+            point_rule_id=point_rule_id,
+            multiplier=_maybe_float(cells[11].get_text(" ", strip=True)) if len(cells) > 11 else None,
+            starters=_maybe_int(cells[14].get_text(" ", strip=True)) if len(cells) > 14 else None,
+        )
+    return found
+
+
+def _parse_ranking_entries(
+    soup: BeautifulSoup,
+    competitions: list[RankingCompetition] | None = None,
+) -> list[RankingEntry]:
+    table = soup.select_one("table.rankingbody")
+    if table is None:
+        return []
+    columns = competitions or []
     entries: list[RankingEntry] = []
     for row in table.find_all("tr"):
         cells = row.find_all("td", recursive=False)
@@ -380,6 +493,8 @@ def _parse_ranking_entries(soup: BeautifulSoup) -> list[RankingEntry]:
         if club_cell:
             clubs = club_cell.get_text(" ", strip=True) or None
         for cell in cells[4:]:
+            if "rankingfield" in " ".join(cell.get("class") or []):
+                break
             text = cell.get_text(" ", strip=True)
             if re.fullmatch(r"(19|20)\d{2}", text):
                 yob = int(text)
@@ -397,9 +512,60 @@ def _parse_ranking_entries(soup: BeautifulSoup) -> list[RankingEntry]:
                 nation=nation,
                 clubs=clubs,
                 yob=yob,
+                results=_parse_table_points(cells, columns),
             )
         )
     return entries
+
+
+def _parse_table_points(
+    cells: list[Tag],
+    competitions: list[RankingCompetition],
+) -> list[RankingTableResult]:
+    if not competitions:
+        return []
+    point_cells = [cell for cell in cells if "rankingfield" in " ".join(cell.get("class") or [])]
+    results: list[RankingTableResult] = []
+    for competition, cell in zip(competitions, point_cells, strict=False):
+        classes = " ".join(cell.get("class") or [])
+        if "rankingfield-empty" in classes:
+            continue
+        span = cell.find("span")
+        title = (span.get("title") if span else "") or ""
+        raw = cell.get_text(" ", strip=True).strip("()")
+        points = _maybe_float(raw)
+        place_match = re.search(r"(?:Platz|Rank)\s*:\s*(\d+)", title)
+        group_match = re.search(r"Grp\.?\s*:\s*([^)]+)", title)
+        if points is None and place_match is None:
+            continue
+        results.append(
+            RankingTableResult(
+                competition_id=competition.competition_id,
+                points=points,
+                counted="ranking-counted" in classes,
+                place=int(place_match.group(1)) if place_match else None,
+                group=group_match.group(1).strip() if group_match else None,
+            )
+        )
+    return results
+
+
+def _iso_date(text: str) -> str | None:
+    match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", text or "")
+    if not match:
+        return None
+    day, month, year = match.groups()
+    return f"{year}-{month}-{day}"
+
+
+def _age_label(text: str) -> str | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        return normalize_age(raw)
+    except ValueError:
+        return raw
 
 
 CLUB_PREFIXES = {

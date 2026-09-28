@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from fenceapi.models import RankingEntry
+from fenceapi.models import RankingCompetition, RankingEntry
 
 CALCULATED_ON_RE = re.compile(
     r"(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\s*(\d{1,2})(?::(\d{2}))?"
@@ -65,7 +65,10 @@ def iso_key(value: str | None) -> str:
     return text[:19]
 
 
-def ranking_content_hash(entries: list[RankingEntry]) -> str:
+def ranking_content_hash(
+    entries: list[RankingEntry],
+    competitions: list[RankingCompetition] | None = None,
+) -> str:
     parts: list[str] = []
     ordered = sorted(
         entries,
@@ -73,9 +76,21 @@ def ranking_content_hash(entries: list[RankingEntry]) -> str:
     )
     for item in ordered:
         points = "" if item.points is None else str(item.points)
-        parts.append(
-            f"{item.athlete_id}|{item.rank}|{points}|{item.clubs or ''}|{item.nation or ''}"
+        line = f"{item.athlete_id}|{item.rank}|{points}|{item.clubs or ''}|{item.nation or ''}"
+        if item.results:
+            bits = [
+                f"{result.competition_id}:{'' if result.points is None else result.points}:"
+                f"{1 if result.counted else 0}:{result.place or ''}"
+                for result in sorted(item.results, key=lambda result: result.competition_id)
+            ]
+            line += "|" + ",".join(bits)
+        parts.append(line)
+    if competitions:
+        ids = ",".join(
+            str(item.competition_id)
+            for item in sorted(competitions, key=lambda item: item.competition_id)
         )
+        parts.append(f"comps:{ids}")
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
 
 

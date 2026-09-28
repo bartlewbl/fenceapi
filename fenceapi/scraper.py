@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
-from fenceapi.client import HttpClient
+from fenceapi.client import FetchError, HttpClient
 from fenceapi.biography_parsers import parse_biography
-from fenceapi.calendar_parsers import parse_calendar, parse_event, parse_inscriptions
+from fenceapi.calendar_parsers import (
+    parse_calendar,
+    parse_calendar_periods,
+    parse_calendar_venues,
+    parse_event,
+    parse_inscriptions,
+    parse_selected_period,
+)
+from fenceapi.calendar_query import DEFAULT_CALENDAR_VENUES
 from fenceapi.models import (
     AthleteProfile,
     CalendarEvent,
@@ -99,11 +108,13 @@ class Scraper:
         gender: str | None = None,
         ageclass: str | None = None,
         venuetype: str | None = "T",
+        period: str | None = None,
     ) -> list[CalendarEvent]:
         url = ophardt_calendar_url(
             self.lang,
             date_from=date_from,
             date_to=date_to,
+            period=period,
             nation=nation,
             region=region,
             city=city,
@@ -114,7 +125,79 @@ class Scraper:
             ageclass=ageclass,
             venuetype=venuetype,
         )
-        return parse_calendar(self.client.get_text(url), url)
+        events = parse_calendar(self.client.get_text(url), url)
+        if venuetype:
+            for event in events:
+                event.venue = venuetype
+        return events
+
+    def calendar_catalog(
+        self,
+        nation: str | None = None,
+        on_page: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Every public quarter and venue tab, with weapon, age, and country left open.
+
+        Discipline, gender, and age-class filters only shrink this list, so they
+        are not walked. Events are deduped by id.
+        """
+        seed_url = ophardt_calendar_url(self.lang, nation=nation, venuetype="T")
+        seed_html = self.client.get_text(seed_url)
+        periods = parse_calendar_periods(seed_html)
+        venues = parse_calendar_venues(seed_html) or list(DEFAULT_CALENDAR_VENUES)
+        selected = parse_selected_period(seed_html)
+        seen: dict[int, CalendarEvent] = {}
+        pages: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        def note(message: str) -> None:
+            if on_page is not None:
+                on_page(message)
+
+        def absorb(html: str, url: str, venue: str) -> int:
+            found = parse_calendar(html, url)
+            added = 0
+            for event in found:
+                event.venue = venue
+                if event.event_id in seen:
+                    continue
+                seen[event.event_id] = event
+                added += 1
+            return added
+
+        added = absorb(seed_html, seed_url, "T")
+        pages.append({"period": selected, "venue": "T", "count": added})
+        note(f"calendar {selected or 'current'} T: {added} events")
+
+        for period in periods:
+            for venue in venues:
+                if period == selected and venue == "T":
+                    continue
+                url = ophardt_calendar_url(
+                    self.lang,
+                    nation=nation,
+                    period=period,
+                    venuetype=venue,
+                )
+                try:
+                    html = self.client.get_text(url)
+                except FetchError as exc:
+                    errors.append(str(exc))
+                    pages.append({"period": period, "venue": venue, "count": 0, "error": str(exc)})
+                    note(f"calendar {period} {venue}: failed ({exc})")
+                    continue
+                added = absorb(html, url, venue)
+                pages.append({"period": period, "venue": venue, "count": added})
+                note(f"calendar {period} {venue}: {added} new events ({len(seen)} total)")
+
+        events = sorted(seen.values(), key=lambda item: (item.date_start or "", item.event_id))
+        return {
+            "periods": periods,
+            "venues": venues,
+            "pages": pages,
+            "errors": errors,
+            "events": events,
+        }
 
     def event(self, event_id: str | int, include_entries: bool = False) -> EventDetail:
         resolved = parse_event_id(event_id)

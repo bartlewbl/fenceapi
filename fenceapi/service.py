@@ -202,27 +202,60 @@ class ApiService:
         details: bool = False,
         entries: bool = False,
         limit: int | None = None,
+        progress: Any = None,
     ) -> dict[str, Any]:
-        payload = self.calendar(refresh=True, nation=nation)
-        events = payload.get("events") or []
-        if limit is not None:
-            events = events[:limit]
+        def note(message: str) -> None:
+            if progress is not None:
+                progress(message)
+
+        catalog = self.scraper.calendar_catalog(nation=nation, on_page=note)
+        events = list(catalog["events"])
+        stored = {
+            "count": len(events),
+            "periods": catalog["periods"],
+            "venues": catalog["venues"],
+            "pages": catalog["pages"],
+            "errors": catalog["errors"],
+            "events": [item.to_dict() for item in events],
+        }
+        key = "all" if not nation else f"nation:{nation.upper()}"
+        fetched_at = self.events.put("calendar", key, stored)
+        note(f"saved {len(events)} calendar events")
+
         expanded = 0
+        competitions = 0
+        detail_errors: list[str] = []
+        targets = events[:limit] if limit is not None else events
         if details or entries:
-            for item in events:
-                event_id = item.get("event_id")
-                if not event_id:
-                    continue
-                self.event(int(event_id), refresh=True)
-                if entries:
-                    self.entries(int(event_id), refresh=True)
-                expanded += 1
-        self.current(nation=nation.lower() if nation else None, refresh=True)
+            total = len(targets)
+            for index, item in enumerate(targets, start=1):
+                event_id = item.event_id
+                try:
+                    payload = self.event(int(event_id), refresh=True)
+                    competitions += len(payload.get("competitions") or [])
+                    if entries:
+                        self.entries(int(event_id), refresh=True)
+                    expanded += 1
+                    if index == 1 or index % 25 == 0 or index == total:
+                        note(f"event {index}/{total} id={event_id} competitions so far {competitions}")
+                except Exception as exc:
+                    detail_errors.append(f"{event_id}: {exc}")
+                    note(f"event {event_id} failed ({exc})")
+        try:
+            self.current(nation=nation.lower() if nation else None, refresh=True)
+        except Exception as exc:
+            detail_errors.append(f"current: {exc}")
         return {
-            "ok": True,
-            "calendar_count": payload.get("count"),
+            "ok": not catalog["errors"] and not detail_errors,
+            "calendar_count": len(events),
+            "periods": catalog["periods"],
+            "venues": catalog["venues"],
+            "pages": len(catalog["pages"]),
             "details": expanded,
-            "fetched_at": payload.get("fetched_at"),
+            "competitions": competitions,
+            "errors": [*catalog["errors"], *detail_errors],
+            "fetched_at": fetched_at,
+            "cache_key": key,
         }
 
     def _fetch_calendar(self, params: dict[str, str | None]) -> dict[str, Any]:

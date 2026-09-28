@@ -30,6 +30,50 @@ YOB_RE = re.compile(r"^(19|20)\d{2}$")
 MASTER_COMP_RE = re.compile(r"results-mastercompetition/(\d+)")
 
 
+PERIOD_VALUE_RE = re.compile(r"^\d{4}-\d{2}$")
+VENUE_VALUE_RE = re.compile(r"[?&]venuetype=([A-Za-z])")
+
+
+def parse_calendar_periods(html: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    select = soup.find("select", attrs={"name": "period"})
+    if not isinstance(select, Tag):
+        return []
+    periods: list[str] = []
+    for option in select.find_all("option"):
+        value = (option.get("value") or "").strip()
+        if PERIOD_VALUE_RE.fullmatch(value) and value not in periods:
+            periods.append(value)
+    return periods
+
+
+def parse_selected_period(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    select = soup.find("select", attrs={"name": "period"})
+    if not isinstance(select, Tag):
+        return None
+    for option in select.find_all("option"):
+        if not option.has_attr("selected"):
+            continue
+        value = (option.get("value") or "").strip()
+        if PERIOD_VALUE_RE.fullmatch(value):
+            return value
+    return None
+
+
+def parse_calendar_venues(html: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    venues: list[str] = []
+    for anchor in soup.select("a[href]"):
+        match = VENUE_VALUE_RE.search(anchor.get("href") or "")
+        if match is None:
+            continue
+        code = match.group(1).upper()
+        if code not in venues:
+            venues.append(code)
+    return venues
+
+
 def parse_calendar(html: str, url: str) -> list[CalendarEvent]:
     soup = BeautifulSoup(html, "html.parser")
     events: list[CalendarEvent] = []

@@ -17,6 +17,9 @@ CALENDAR_GENDERS = {
     "open": "O",
     "mixed": "X",
 }
+# Public calendar tabs. Weapon, gender, age, and nation filters only narrow this list.
+DEFAULT_CALENDAR_VENUES = ("T", "X", "C", "E", "S", "O", "R")
+
 CALENDAR_VENUES = {
     "tournament": "T",
     "tournaments": "T",

@@ -65,6 +65,7 @@ def ophardt_calendar_url(
     *,
     date_from: str | None = None,
     date_to: str | None = None,
+    period: str | None = None,
     nation: str | None = None,
     region: str | None = None,
     city: str | None = None,
@@ -80,6 +81,8 @@ def ophardt_calendar_url(
         params["date-from"] = date_from
     if date_to:
         params["date-to"] = date_to
+    if period:
+        params["period"] = period
     if nation:
         params["nation"] = nation.upper()
     if region:

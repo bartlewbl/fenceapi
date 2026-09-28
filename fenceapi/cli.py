@@ -196,9 +196,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Max requests per IP per minute (default: from fenceapi.toml [api]). Use 0 to disable.",
     )
 
-    sync_cal = sub.add_parser("sync-calendar", help="Refresh the local calendar/event cache")
-    sync_cal.add_argument("nation", nargs="?", help="NOC filter, e.g. GER")
-    sync_cal.add_argument("--details", action="store_true", help="Also fetch each event page")
+    sync_cal = sub.add_parser(
+        "sync-calendar",
+        help="Save the public Ophardt calendar: every quarter and venue type, all countries and categories",
+    )
+    sync_cal.add_argument("nation", nargs="?", help="Optional NOC filter, e.g. GER. Omit for every country.")
+    sync_cal.add_argument(
+        "--details",
+        action="store_true",
+        help="Also fetch each event page (competitions, dates, invitation)",
+    )
     sync_cal.add_argument("--entries", action="store_true", help="Also fetch entry lists")
     sync_cal.add_argument("--limit", type=int, help="Max events to expand")
     sync_cal.add_argument("--db", default=settings.paths.rankings_db)
@@ -387,6 +394,7 @@ def _sync_calendar(scraper: Scraper, args: argparse.Namespace) -> Any:
         details=args.details,
         entries=args.entries,
         limit=args.limit,
+        progress=lambda message: print(message, file=sys.stderr, flush=True),
     )
 
 

@@ -120,6 +120,48 @@ def _seed_rankings(store: RankingStore) -> None:
     )
 
 
+def test_sync_calendar_stores_every_quarter(tmp_path: Path) -> None:
+    class CatalogScraper(FakeScraper):
+        def calendar_catalog(self, nation=None, on_page=None):
+            return {
+                "periods": ["2026-06", "2026-09"],
+                "venues": ["T", "X"],
+                "pages": [{"period": "2026-09", "venue": "T", "count": 1}],
+                "errors": [],
+                "events": [
+                    CalendarEvent(
+                        event_id=34860,
+                        url="https://fencing.ophardt.online/en/widget/event/34860",
+                        title="2026 Erzgebirgs-Cup",
+                        subtitle=None,
+                        date_start="2026-08-22",
+                        date_end="2026-08-23",
+                        nation="GER",
+                        region="SN",
+                        city="Stollberg",
+                        venue="T",
+                    )
+                ],
+            }
+
+        def home(self, nation=None):
+            return HomePage(url="https://www.fencingworldwide.com/en/")
+
+    events = EventStore(tmp_path / "events.sqlite")
+    service = ApiService(
+        CatalogScraper(),
+        events,
+        RankingStore(tmp_path / "rankings.sqlite"),
+    )
+    report = service.sync_calendar(details=True)
+    stored, _fetched = events.get("calendar", "all")
+    assert report["calendar_count"] == 1
+    assert report["details"] == 1
+    assert stored["venues"] == ["T", "X"]
+    assert stored["events"][0]["venue"] == "T"
+    assert events.get("event", "34860") is not None
+
+
 def test_calendar_uses_cache(tmp_path: Path) -> None:
     client, scraper, _ = _app(tmp_path)
     first = client.get("/v1/calendar", params={"nation": "GER"})

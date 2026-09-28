@@ -81,6 +81,46 @@ def test_parse_ranking_list() -> None:
     assert listing.entries[0].clubs == "TSV Bayer 04 Leverkusen"
     assert listing.entries[0].yob == 1995
     assert listing.entries[1].rank == 2
+    assert listing.competitions == []
+    assert listing.entries[0].results == []
+
+
+def test_parse_ranking_table_points() -> None:
+    listing = parse_ranking_list(
+        (FIXTURES / "ranking_points.html").read_text(encoding="utf-8"),
+        ranking_show_url(122661),
+        122661,
+    )
+    assert [item.competition_id for item in listing.competitions] == [197542, 203263]
+    berlin = listing.competitions[0]
+    assert berlin.title == "Berlin Open"
+    assert berlin.date_start == "2025-09-13"
+    assert berlin.date_end == "2025-09-14"
+    assert berlin.city == "Berlin"
+    assert berlin.nation == "GER"
+    assert berlin.age_class == "senior"
+    assert berlin.group == "1"
+    assert berlin.point_rule == "F2 oH"
+    assert berlin.point_rule_id == 1121
+    assert berlin.multiplier == 1
+    assert berlin.starters == 62
+    assert berlin.position == 1
+
+    first = listing.entries[0]
+    assert first.athlete_id == 20736
+    assert first.yob == 1987
+    assert len(first.results) == 1
+    assert first.results[0].competition_id == 197542
+    assert first.results[0].points == 32
+    assert first.results[0].counted is True
+    assert first.results[0].place == 3
+    assert first.results[0].group == "1"
+
+    second = listing.entries[1]
+    assert [(item.points, item.counted, item.place) for item in second.results] == [
+        (28, True, 5),
+        (12, False, 14),
+    ]
 
 
 def test_parse_club_mentions() -> None:
@@ -209,6 +249,94 @@ def test_snapshots_preserve_ranking_history(tmp_path: Path) -> None:
     assert athlete["rankings"][0]["rank"] == 1
     assert athlete["rankings"][-1]["club"] == "FC Berlin"
     assert any(item["name"] == "FC Berlin" and item["to"] is None for item in athlete["clubs"])
+    assert athlete["rankings"][0]["results"] == []
+
+
+def test_store_saves_table_points(tmp_path: Path) -> None:
+    from fenceapi.models import RankingCompetition, RankingTableResult
+    from fenceapi.store import RankingStore
+
+    store = RankingStore(tmp_path / "rankings.sqlite")
+    federation = RankingFederation(1, "Berlin", "regional", "GER", "https://example")
+    competition = RankingCompetition(
+        competition_id=197542,
+        title="Berlin Open",
+        position=1,
+        date_start="2025-09-13",
+        date_end="2025-09-14",
+        city="Berlin",
+        nation="GER",
+        age_class="senior",
+        group="1",
+        point_rule="F2 oH",
+        point_rule_id=1121,
+        multiplier=1,
+        starters=62,
+    )
+    counted = RankingTableResult(197542, 32, True, place=3, group="1")
+    listing = _sample_listing(
+        ranking_id=122661,
+        competitions=[competition],
+        entries=[
+            RankingEntry(
+                1, 150, 0, "HADASCHIK Markus", 20736, "GER", "BE FC Grunewald", 1987,
+                results=[counted],
+            )
+        ],
+    )
+    store.save_ranking(listing, federation=federation)
+    live = store.get_ranking(122661)
+    assert live is not None
+    assert live.competitions[0].title == "Berlin Open"
+    assert live.competitions[0].point_rule_id == 1121
+    assert live.entries[0].results[0].points == 32
+    assert live.entries[0].results[0].counted is True
+    assert live.entries[0].results[0].place == 3
+
+    athlete = store.athlete_history(20736)
+    assert athlete is not None
+    assert athlete["rankings"][0]["results"] == [
+        {
+            "competition_id": 197542,
+            "title": "Berlin Open",
+            "date": "2025-09-13",
+            "city": "Berlin",
+            "nation": "GER",
+            "age_class": "senior",
+            "point_rule": "F2 oH",
+            "points": 32,
+            "counted": True,
+            "place": 3,
+            "group": "1",
+        }
+    ]
+
+    scratched = RankingTableResult(197542, 12, False, place=14, group="1")
+    store.save_ranking(
+        _sample_listing(
+            ranking_id=122661,
+            calculated_on="12.08.2026. 10:00",
+            competitions=[competition],
+            entries=[
+                RankingEntry(
+                    1, 20, 0, "HADASCHIK Markus", 20736, "GER", "BE FC Grunewald", 1987,
+                    results=[scratched],
+                )
+            ],
+        ),
+        federation=federation,
+    )
+    past = store.get_ranking(122661, as_of="2026-07-24")
+    assert past is not None
+    assert past.entries[0].results[0].points == 32
+    assert past.entries[0].results[0].counted is True
+    current = store.get_ranking(122661)
+    assert current is not None
+    assert current.entries[0].results[0].counted is False
+    assert current.entries[0].results[0].points == 12
+    history = store.athlete_history(20736)
+    assert history is not None
+    assert [item["results"][0]["counted"] for item in history["rankings"]] == [True, False]
 
 
 def test_backfill_creates_snapshot_from_existing_lists(tmp_path: Path) -> None:

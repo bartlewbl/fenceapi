@@ -12,13 +12,16 @@ from typing import Any, Iterator
 from fenceapi.models import (
     RankingCatalog,
     RankingCategory,
+    RankingCompetition,
     RankingEntry,
     RankingFederation,
     RankingList,
+    RankingTableResult,
 )
 from fenceapi.ranking_history import (
     RankingUpdate,
     diff_ranking_entries,
+    entry_identity,
     iso_key,
     normalize_as_of,
     parse_calculated_on,
@@ -123,11 +126,74 @@ class RankingStore:
               yob INTEGER,
               points REAL
             );
+            CREATE TABLE IF NOT EXISTS ranking_competitions (
+              ranking_id INTEGER NOT NULL,
+              competition_id INTEGER NOT NULL,
+              position INTEGER NOT NULL,
+              title TEXT,
+              city TEXT,
+              nation TEXT,
+              date_start TEXT,
+              date_end TEXT,
+              age_class TEXT,
+              comp_group TEXT,
+              point_rule TEXT,
+              point_rule_id INTEGER,
+              multiplier REAL,
+              starters INTEGER,
+              PRIMARY KEY (ranking_id, competition_id)
+            );
+            CREATE TABLE IF NOT EXISTS ranking_table_points (
+              ranking_id INTEGER NOT NULL,
+              entry_key TEXT NOT NULL,
+              athlete_id INTEGER,
+              name TEXT,
+              competition_id INTEGER NOT NULL,
+              points REAL,
+              counted INTEGER NOT NULL,
+              place INTEGER,
+              comp_group TEXT,
+              PRIMARY KEY (ranking_id, entry_key, competition_id)
+            );
+            CREATE TABLE IF NOT EXISTS ranking_competition_history (
+              snapshot_id INTEGER NOT NULL,
+              ranking_id INTEGER NOT NULL,
+              competition_id INTEGER NOT NULL,
+              position INTEGER NOT NULL,
+              title TEXT,
+              city TEXT,
+              nation TEXT,
+              date_start TEXT,
+              date_end TEXT,
+              age_class TEXT,
+              comp_group TEXT,
+              point_rule TEXT,
+              point_rule_id INTEGER,
+              multiplier REAL,
+              starters INTEGER,
+              PRIMARY KEY (snapshot_id, competition_id)
+            );
+            CREATE TABLE IF NOT EXISTS ranking_table_points_history (
+              snapshot_id INTEGER NOT NULL,
+              ranking_id INTEGER NOT NULL,
+              entry_key TEXT NOT NULL,
+              athlete_id INTEGER,
+              name TEXT,
+              competition_id INTEGER NOT NULL,
+              points REAL,
+              counted INTEGER NOT NULL,
+              place INTEGER,
+              comp_group TEXT,
+              PRIMARY KEY (snapshot_id, entry_key, competition_id)
+            );
             CREATE INDEX IF NOT EXISTS idx_entries_ranking ON ranking_entries(ranking_id);
             CREATE INDEX IF NOT EXISTS idx_clubs_name ON clubs(name);
             CREATE INDEX IF NOT EXISTS idx_snapshots_ranking ON ranking_snapshots(ranking_id);
             CREATE INDEX IF NOT EXISTS idx_history_athlete ON ranking_entry_history(athlete_id);
             CREATE INDEX IF NOT EXISTS idx_history_snapshot ON ranking_entry_history(snapshot_id);
+            CREATE INDEX IF NOT EXISTS idx_table_points_athlete ON ranking_table_points(athlete_id);
+            CREATE INDEX IF NOT EXISTS idx_table_points_history_athlete ON ranking_table_points_history(athlete_id);
+            CREATE INDEX IF NOT EXISTS idx_table_points_history_snapshot ON ranking_table_points_history(snapshot_id);
             """
         )
         self._ensure_column("ranking_lists", "content_hash", "TEXT")
@@ -199,7 +265,7 @@ class RankingStore:
                     (listing.ranking_id,),
                 ).fetchone()
                 fetched_at = fetched["fetched_at"] if fetched else utcnow()
-                digest = ranking_content_hash(listing.entries)
+                digest = ranking_content_hash(listing.entries, listing.competitions)
                 with self._lock:
                     with self._transaction():
                         if fetched and not fetched["content_hash"]:
@@ -293,7 +359,7 @@ class RankingStore:
         default_nation: str | None = None,
         ingest_clubs: bool = True,
     ) -> RankingUpdate:
-        digest = ranking_content_hash(ranking.entries)
+        digest = ranking_content_hash(ranking.entries, ranking.competitions)
         previous = self.latest_snapshot(ranking.ranking_id)
         created = previous is None
         if previous is not None and previous["content_hash"] == digest:
@@ -390,6 +456,8 @@ class RankingStore:
                 for entry in ranking.entries
             ],
         )
+        self._write_competitions(ranking, snapshot_id=None)
+        self._write_table_points(ranking, snapshot_id=None)
 
     def _insert_snapshot(self, ranking: RankingList, digest: str, fetched_at: str) -> int:
         cursor = self._conn.execute(
@@ -429,7 +497,98 @@ class RankingStore:
                 for entry in ranking.entries
             ],
         )
+        self._write_competitions(ranking, snapshot_id=snapshot_id)
+        self._write_table_points(ranking, snapshot_id=snapshot_id)
         return snapshot_id
+
+    def _write_competitions(self, ranking: RankingList, snapshot_id: int | None) -> None:
+        if snapshot_id is None:
+            self._conn.execute(
+                "DELETE FROM ranking_competitions WHERE ranking_id=?",
+                (ranking.ranking_id,),
+            )
+            sql = """
+                INSERT INTO ranking_competitions(
+                  ranking_id, competition_id, position, title, city, nation,
+                  date_start, date_end, age_class, comp_group, point_rule,
+                  point_rule_id, multiplier, starters
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """
+            prefix: tuple[Any, ...] = ()
+        else:
+            sql = """
+                INSERT INTO ranking_competition_history(
+                  snapshot_id, ranking_id, competition_id, position, title, city, nation,
+                  date_start, date_end, age_class, comp_group, point_rule,
+                  point_rule_id, multiplier, starters
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """
+            prefix = (snapshot_id,)
+        self._conn.executemany(
+            sql,
+            [
+                (
+                    *prefix,
+                    ranking.ranking_id,
+                    item.competition_id,
+                    item.position,
+                    item.title,
+                    item.city,
+                    item.nation,
+                    item.date_start,
+                    item.date_end,
+                    item.age_class,
+                    item.group,
+                    item.point_rule,
+                    item.point_rule_id,
+                    item.multiplier,
+                    item.starters,
+                )
+                for item in ranking.competitions
+            ],
+        )
+
+    def _write_table_points(self, ranking: RankingList, snapshot_id: int | None) -> None:
+        if snapshot_id is None:
+            self._conn.execute(
+                "DELETE FROM ranking_table_points WHERE ranking_id=?",
+                (ranking.ranking_id,),
+            )
+            sql = """
+                INSERT INTO ranking_table_points(
+                  ranking_id, entry_key, athlete_id, name, competition_id,
+                  points, counted, place, comp_group
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+            """
+            prefix = ()
+        else:
+            sql = """
+                INSERT INTO ranking_table_points_history(
+                  snapshot_id, ranking_id, entry_key, athlete_id, name, competition_id,
+                  points, counted, place, comp_group
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+            """
+            prefix = (snapshot_id,)
+        rows: list[tuple[Any, ...]] = []
+        for entry in ranking.entries:
+            key = entry_identity(entry)
+            for result in entry.results:
+                rows.append(
+                    (
+                        *prefix,
+                        ranking.ranking_id,
+                        key,
+                        entry.athlete_id,
+                        entry.name,
+                        result.competition_id,
+                        result.points,
+                        1 if result.counted else 0,
+                        result.place,
+                        result.group,
+                    )
+                )
+        if rows:
+            self._conn.executemany(sql, rows)
 
 
     def cleanup_year_clubs(self) -> None:
@@ -667,7 +826,7 @@ class RankingStore:
             if row is None:
                 return None
             entries = self._live_entries(ranking_id)
-            return self._listing_from_row(row, entries)
+            return self._listing_from_row(row, entries, snapshot_id=None)
 
         cutoff = iso_key(normalize_as_of(as_of))
         snapshots = self._conn.execute(
@@ -702,11 +861,19 @@ class RankingStore:
         if meta is None:
             return None
         entries = self._history_entries(snapshot["snapshot_id"])
-        listing = self._listing_from_row(meta, entries)
+        listing = self._listing_from_row(meta, entries, snapshot_id=snapshot["snapshot_id"])
         listing.calculated_on = snapshot["calculated_on"]
         return listing
 
-    def _listing_from_row(self, row: sqlite3.Row, entries: list[RankingEntry]) -> RankingList:
+    def _listing_from_row(
+        self,
+        row: sqlite3.Row,
+        entries: list[RankingEntry],
+        snapshot_id: int | None,
+    ) -> RankingList:
+        by_entry = self._load_table_points(row["ranking_id"], snapshot_id)
+        for entry in entries:
+            entry.results = by_entry.get(entry_identity(entry), [])
         return RankingList(
             ranking_id=row["ranking_id"],
             url=ranking_show_url(row["ranking_id"]),
@@ -718,7 +885,84 @@ class RankingStore:
             calculated_on=row["calculated_on"],
             season=row["season"],
             entries=entries,
+            competitions=self._load_competitions(row["ranking_id"], snapshot_id),
         )
+
+    def _load_competitions(
+        self,
+        ranking_id: int,
+        snapshot_id: int | None,
+    ) -> list[RankingCompetition]:
+        if snapshot_id is None:
+            sql = """
+                SELECT competition_id, position, title, city, nation, date_start, date_end,
+                       age_class, comp_group, point_rule, point_rule_id, multiplier, starters
+                FROM ranking_competitions WHERE ranking_id=? ORDER BY position
+            """
+            args: tuple[Any, ...] = (ranking_id,)
+        else:
+            sql = """
+                SELECT competition_id, position, title, city, nation, date_start, date_end,
+                       age_class, comp_group, point_rule, point_rule_id, multiplier, starters
+                FROM ranking_competition_history WHERE snapshot_id=? ORDER BY position
+            """
+            args = (snapshot_id,)
+        return [
+            RankingCompetition(
+                competition_id=item["competition_id"],
+                title=item["title"] or "",
+                position=item["position"],
+                date_start=item["date_start"],
+                date_end=item["date_end"],
+                city=item["city"],
+                nation=item["nation"],
+                age_class=item["age_class"],
+                group=item["comp_group"],
+                point_rule=item["point_rule"],
+                point_rule_id=item["point_rule_id"],
+                multiplier=item["multiplier"],
+                starters=item["starters"],
+            )
+            for item in self._conn.execute(sql, args)
+        ]
+
+    def _load_table_points(
+        self,
+        ranking_id: int,
+        snapshot_id: int | None,
+    ) -> dict[str, list[RankingTableResult]]:
+        if snapshot_id is None:
+            sql = """
+                SELECT p.entry_key, p.competition_id, p.points, p.counted, p.place, p.comp_group
+                FROM ranking_table_points p
+                LEFT JOIN ranking_competitions c
+                  ON c.ranking_id = p.ranking_id AND c.competition_id = p.competition_id
+                WHERE p.ranking_id=?
+                ORDER BY c.position, p.competition_id
+            """
+            args: tuple[Any, ...] = (ranking_id,)
+        else:
+            sql = """
+                SELECT p.entry_key, p.competition_id, p.points, p.counted, p.place, p.comp_group
+                FROM ranking_table_points_history p
+                LEFT JOIN ranking_competition_history c
+                  ON c.snapshot_id = p.snapshot_id AND c.competition_id = p.competition_id
+                WHERE p.snapshot_id=?
+                ORDER BY c.position, p.competition_id
+            """
+            args = (snapshot_id,)
+        grouped: dict[str, list[RankingTableResult]] = {}
+        for item in self._conn.execute(sql, args):
+            grouped.setdefault(item["entry_key"], []).append(
+                RankingTableResult(
+                    competition_id=item["competition_id"],
+                    points=item["points"],
+                    counted=bool(item["counted"]),
+                    place=item["place"],
+                    group=item["comp_group"],
+                )
+            )
+        return grouped
 
     def _live_entries(self, ranking_id: int) -> list[RankingEntry]:
         return [
@@ -803,6 +1047,7 @@ class RankingStore:
         if not rows:
             return None
         latest = rows[-1]
+        table_points = self._athlete_table_points(athlete_id)
         rankings: list[dict[str, Any]] = []
         for row in rows:
             at = row["calculated_at"] or row["fetched_at"]
@@ -823,6 +1068,7 @@ class RankingStore:
                     "club": row["clubs_raw"],
                     "ranking_id": row["ranking_id"],
                     "title": row["title"],
+                    "results": table_points.get(row["snapshot_id"], []),
                 }
             )
         return {
@@ -846,8 +1092,42 @@ class RankingStore:
             "entries": count("ranking_entries"),
             "snapshots": count("ranking_snapshots"),
             "history_entries": count("ranking_entry_history"),
+            "table_points": count("ranking_table_points"),
             "clubs": count("clubs"),
         }
+
+    def _athlete_table_points(self, athlete_id: int) -> dict[int, list[dict[str, Any]]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+              p.snapshot_id, p.competition_id, p.points, p.counted, p.place, p.comp_group,
+              c.title, c.city, c.nation, c.date_start, c.age_class, c.point_rule, c.position
+            FROM ranking_table_points_history p
+            LEFT JOIN ranking_competition_history c
+              ON c.snapshot_id = p.snapshot_id AND c.competition_id = p.competition_id
+            WHERE p.athlete_id=?
+            ORDER BY p.snapshot_id, c.position, p.competition_id
+            """,
+            (athlete_id,),
+        ).fetchall()
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(row["snapshot_id"], []).append(
+                {
+                    "competition_id": row["competition_id"],
+                    "title": row["title"],
+                    "date": row["date_start"],
+                    "city": row["city"],
+                    "nation": row["nation"],
+                    "age_class": row["age_class"],
+                    "point_rule": row["point_rule"],
+                    "points": row["points"],
+                    "counted": bool(row["counted"]),
+                    "place": row["place"],
+                    "group": row["comp_group"],
+                }
+            )
+        return grouped
 
 
 

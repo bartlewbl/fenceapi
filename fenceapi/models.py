@@ -253,6 +253,42 @@ class ClubMention:
 
 
 @dataclass(slots=True)
+class RankingTableResult:
+    """Points one fencer took from a single competition column on a ranking."""
+
+    competition_id: int
+    points: float | None
+    counted: bool
+    place: int | None = None
+    group: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RankingCompetition:
+    """A competition whose results feed a ranking list."""
+
+    competition_id: int
+    title: str
+    position: int = 0
+    date_start: str | None = None
+    date_end: str | None = None
+    city: str | None = None
+    nation: str | None = None
+    age_class: str | None = None
+    group: str | None = None
+    point_rule: str | None = None
+    point_rule_id: int | None = None
+    multiplier: float | None = None
+    starters: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
 class RankingEntry:
     rank: int | None
     points: float | None
@@ -262,6 +298,7 @@ class RankingEntry:
     nation: str | None
     clubs: str | None
     yob: int | None
+    results: list[RankingTableResult] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -279,6 +316,7 @@ class RankingList:
     calculated_on: str | None
     season: int | None
     entries: list[RankingEntry] = field(default_factory=list)
+    competitions: list[RankingCompetition] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -292,6 +330,7 @@ class RankingList:
             "calculated_on": self.calculated_on,
             "season": self.season,
             "count": len(self.entries),
+            "competitions": [item.to_dict() for item in self.competitions],
             "entries": [item.to_dict() for item in self.entries],
         }
 
@@ -314,6 +353,7 @@ class CalendarEvent:
     status: str | None = None
     updated: str | None = None
     open_for: str | None = None
+    venue: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -333,6 +373,7 @@ class CalendarEvent:
             "status": self.status,
             "updated": self.updated,
             "open_for": self.open_for,
+            "venue": self.venue,
         }
 
 
